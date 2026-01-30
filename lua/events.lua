@@ -309,39 +309,39 @@ end
 ---generate a story line based on stuff
 ---@return table|nil generated story line as a table, or nil on failure
 local function generate_story_line()
-    local current_turn = wesnoth.current.turn or 1
-
     local prompt = string.format(
         "You are generating a short scripted story beat for a Battle for Wesnoth scenario.\n" ..
-        "Current turn: %d\n\n" ..
         "Theme: orc raid, desperate last stand\n\n" ..
         "Scenario context: \n" ..
         " - The orcish forces are attempting to break through the southern defenses.\n" ..
         " - The leader id of the human side is 'Arden'.\n\n" ..
+        "Output format (JSON object keyed by turn number):\n" ..
+        "{\n" ..
+        "  \"1\": [\n" ..
+        "    {\n" ..
+        "      \"type\": \"spawn\",\n" ..
+        "      \"side\": 2,\n" ..
+        "      \"area\": \"south\",\n" ..
+        "      \"unit\": \"Orcish Grunt\",\n" ..
+        "      \"id\": \"orc1\"\n" ..
+        "    },\n" ..
+        "    {\n" ..
+        "      \"type\": \"dialogue\",\n" ..
+        "      \"speaker\": \"orc1\",\n" ..
+        "      \"message\": \"Break their line!\"\n" ..
+        "    }\n" ..
+        "  ],\n" ..
+        "  \"4\": [ ... ]\n" ..
+        "}\n\n" ..
         "Rules:\n" ..
-        "- Output ONLY valid JSON\n" ..
         "- Do NOT invent new factions\n" ..
         "- Only use these unit types: %s\n" ..
         "- Spawn areas allowed: %s\n" ..
-        "- Maximum enemies to spawn: 4\n" ..
-        "- Dialogue lines must be under 12 words\n\n" ..
-        "Output format:\n" ..
-        "[\n" ..
-        "  {\n" ..
-        "    \"type\": \"spawn\",\n" ..
-        "    \"side\": 2,\n" ..
-        "    \"area\": \"north\",\n" ..
-        "    \"unit\": \"Orcish Grunt\",\n" ..
-        "    \"id\": \"orc_grunt_1\"\n" ..
-        "  },\n" ..
-        "  {\n" ..
-        "    \"type\": \"dialogue\",\n" ..
-        "    \"speaker\": \"orc_grunt_1\",\n" ..
-        "    \"message\": \"For the Horde!\"\n" ..
-        "  }\n" ..
-        "]\n\n" ..
-        "Generate a story line based on the current turn number.",
-        current_turn,
+        "- Keys MUST be turn numbers\n" ..
+        "- No more than 4 enemies per turn\n" ..
+        "- Dialogue under 12 words\n" ..
+        "- Output ONLY valid JSON\n\n" ..
+        "Generate a full multi-turn story plan.",
         table.concat(ALLOWED_UNITS, ", "),
         table.concat(ALLOWED_AREAS, ", ")
     )
@@ -416,6 +416,21 @@ local function handle_dialogue_action(action)
     end
 end
 
+---handle a story action
+---@param action table story action
+---@return nil
+local function handle_action(action)
+    if not action or type(action) ~= "table" then return end
+
+    if action.type == "spawn" then
+        debug_chat("Handling spawn action:", json.stringify(action))
+        handle_spawn_action(action)
+    elseif action.type == "dialogue" then
+        debug_chat("Handling dialogue action:", json.stringify(action))
+        handle_dialogue_action(action)
+    end
+end
+
 ---detect close call based on damage and HP%
 ---@param damage number damage dealt
 ---@param current_hp number current HP of unit
@@ -453,20 +468,28 @@ function M.spawn_orcs()
     end
 end
 
--- on_new_story (generates and executes a story line)
-function M.on_new_story()
-    local story_line = generate_story_line()
-    if not story_line then return end
+-- WML hook: on story initialization (use [event] name=prestart)
+function M.on_story_init()
+    local plan = generate_story_line()
+    if not plan then return end
 
-    for _, action in ipairs(story_line) do
-        if action.type == "spawn" then
-            debug_chat("Handling spawn action:", json.stringify(action))
-            handle_spawn_action(action)
-        elseif action.type == "dialogue" then
-            debug_chat("Handling dialogue action:", json.stringify(action))
-            handle_dialogue_action(action)
+    for turn_str, actions in pairs(plan) do
+        local turn = tonumber(turn_str)
+        if turn and type(actions) == "table" then
+            wesnoth.game_events.add{
+                name = "turn " .. turn,
+                first_time_only = true,
+                action = function()
+                    debug_chat("Executing story events for turn " .. turn)
+                    for _, action in ipairs(actions) do
+                        handle_action(action)
+                    end
+                end
+            }
         end
     end
+
+    debug_chat("Story plan initialized.")
 end
 
 -- WML hook: when a unit is recruited (use [event] name=recruit)
@@ -483,7 +506,7 @@ function M.on_unit_recruited()
     ))
 end
 
--- WML hook: when an enemy unit is killed (use [event] name=enemy_killed)
+-- WML hook: when an enemy unit is killed (use [event] name=last breath)
 function M.on_enemy_killed()
     local dead = wml.variables.unit
     local killer = wml.variables.second_unit
