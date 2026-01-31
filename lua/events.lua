@@ -48,6 +48,13 @@ local function debug_chat(speaker, text)
     end
 end
 
+---error chat message
+---@param text string message text
+---@return nil
+local function error_chat(text)
+    wesnoth.interface.add_chat_message("Error", text)
+end
+
 ---generate text using Ollama LLM
 ---@param prompt string prompt text
 ---@return string|nil generated text or nil on failure
@@ -356,7 +363,7 @@ local function generate_story_line()
     end
 
     if not reply then
-        debug_chat("Failed to generate story line.")
+        error_chat("Failed to generate story line.")
         return nil
     end
 
@@ -365,7 +372,7 @@ local function generate_story_line()
     if ok and type(res) == "table" then
         story_line = res
     else
-        debug_chat("Failed to parse story line JSON.")
+        error_chat("Failed to parse story line JSON.")
         return nil
     end
 
